@@ -1,12 +1,17 @@
-import streamlit as st
+remove only this part to the code import streamlit as st
 import cv2
+import numpy as np
 from ultralytics import YOLO
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 # -----------------------------
 # PAGE SETUP
 # -----------------------------
-st.set_page_config(page_title="YOLOv8 Detection", layout="wide")
-st.title("🎥 Live Object Detection & Tracking")
+st.set_page_config(page_title="Live Object Detection & Tracking", layout="wide")
+
+st.title("🎥 Live Object Detection & Tracing")
+st.write("Turn on your webcam to detect and track objects in real time.")
 
 # -----------------------------
 # LOAD MODEL
@@ -18,37 +23,74 @@ def load_model():
 model = load_model()
 
 # -----------------------------
-# SIDEBAR
+# VIDEO PROCESSOR CLASS
 # -----------------------------
-conf = st.sidebar.slider("Confidence", 0.1, 1.0, 0.5)
-run = st.checkbox("Start Camera")
+class YOLOProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.model = model
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+
+        # Run YOLO tracking (this gives object IDs)
+        results = self.model.track(img, persist=True, verbose=False)
+
+        annotated_frame = results[0].plot()
+
+        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
 
 # -----------------------------
-# CAMERA
+# START WEBCAM STREAM
 # -----------------------------
-frame_placeholder = st.empty()
+webrtc_streamer(
+    key="yolo-live",
+    video_processor_factory=YOLOProcessor,
+    media_stream_constraints={"video": True, "audio": False}
+)
 
-camera = cv2.VideoCapture(0)
+# -----------------------------
+# INFO SECTION (FOR REPORT REQUIREMENTS)
+# -----------------------------
+st.markdown("""
+---
 
-if run:
-    st.info("Camera running... Press Stop in checkbox to end.")
+## 📊 Expected Outputs
 
-    while run:
-        ret, frame = camera.read()
-        if not ret:
-            st.error("Camera not working")
-            break
+### 1. Functional Web App
+- Live webcam feed
+- YOLO object detection overlay
 
-        results = model.track(frame, persist=True, conf=conf)
-        annotated = results[0].plot()
+### 2. Live Detection
+- Bounding boxes appear instantly
+- Labels like person, phone, bottle, etc.
 
-        frame_placeholder.image(annotated, channels="BGR")
+### 3. Object Tracking
+- Objects keep IDs while moving
+- Smooth real-time tracking using YOLOv8
 
-        # refresh checkbox state
-        if not st.session_state.get("run", True):
-            break
+---
 
-else:
-    st.warning("Camera OFF")
+## 📌 For Your Report
 
-camera.release()
+### Observations
+- List detected objects
+- Lighting effect on accuracy
+- Performance (lag/smooth)
+
+### Screenshots
+Capture:
+- People detection
+- Multiple object detection
+- Moving object tracking
+
+### Reflection
+- What objects were easiest to detect?
+- What affected accuracy?
+
+---
+
+## 🚀 Optional Enhancements
+- Object counting (people, cars)
+- Alerts for specific objects
+- Save detected frames as images
+""")
