@@ -1,6 +1,7 @@
-import streamlit as st
-import cv2
+     import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 from ultralytics import YOLO
+import av
 
 # -----------------------------
 # PAGE SETUP
@@ -18,37 +19,36 @@ def load_model():
 model = load_model()
 
 # -----------------------------
-# SIDEBAR
+# SIDEBAR SETTINGS
 # -----------------------------
 conf = st.sidebar.slider("Confidence", 0.1, 1.0, 0.5)
-run = st.checkbox("Start Camera")
 
 # -----------------------------
-# CAMERA
+# VIDEO PROCESSOR
 # -----------------------------
-frame_placeholder = st.empty()
+class YOLOProcessor(VideoProcessorBase):
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
 
-camera = cv2.VideoCapture(0)
+        results = model.track(
+            img,
+            persist=True,
+            conf=conf,
+            verbose=False
+        )
 
-if run:
-    st.info("Camera running... Press Stop in checkbox to end.")
-
-    while run:
-        ret, frame = camera.read()
-        if not ret:
-            st.error("Camera not working")
-            break
-
-        results = model.track(frame, persist=True, conf=conf)
         annotated = results[0].plot()
 
-        frame_placeholder.image(annotated, channels="BGR")
+        return av.VideoFrame.from_ndarray(annotated, format="bgr24")
 
-        # refresh checkbox state
-        if not st.session_state.get("run", True):
-            break
-
-else:
-    st.warning("Camera OFF")
-
-camera.release()
+# -----------------------------
+# WEBCAM STREAM (BROWSER BASED)
+# -----------------------------
+webrtc_streamer(
+    key="yolo",
+    video_processor_factory=YOLOProcessor,
+    media_stream_constraints={
+        "video": True,
+        "audio": False
+    }
+)
