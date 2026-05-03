@@ -1,54 +1,67 @@
 import streamlit as st
-import cv2
 from ultralytics import YOLO
+import numpy as np
+from PIL import Image
+import cv2
+import tempfile
 
 # -----------------------------
 # PAGE SETUP
 # -----------------------------
 st.set_page_config(page_title="YOLOv8 Detection", layout="wide")
-st.title("🎥 Live Object Detection & Tracking")
+st.title("📷 YOLOv8 Object Detection (Deployment Ready)")
 
 # -----------------------------
 # LOAD MODEL
 # -----------------------------
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8n.pt")
+    return YOLO("yolov8n.pt")  # auto-download
 
 model = load_model()
 
 # -----------------------------
-# SIDEBAR
+# SELECT MODE
 # -----------------------------
-conf = st.sidebar.slider("Confidence", 0.1, 1.0, 0.5)
-run = st.checkbox("Start Camera")
+option = st.radio("Choose Input Type:", ["Image", "Video"])
 
 # -----------------------------
-# CAMERA
+# IMAGE DETECTION
 # -----------------------------
-frame_placeholder = st.empty()
+if option == "Image":
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-camera = cv2.VideoCapture(0)
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Image", use_container_width=True)
 
-if run:
-    st.info("Camera running... Press Stop in checkbox to end.")
+        results = model(image)
+        result_img = results[0].plot()
 
-    while run:
-        ret, frame = camera.read()
-        if not ret:
-            st.error("Camera not working")
-            break
+        st.image(result_img, caption="Detected Objects", use_container_width=True)
 
-        results = model.track(frame, persist=True, conf=conf)
-        annotated = results[0].plot()
+# -----------------------------
+# VIDEO DETECTION
+# -----------------------------
+elif option == "Video":
+    uploaded_video = st.file_uploader("Upload a video", type=["mp4", "mov", "avi"])
 
-        frame_placeholder.image(annotated, channels="BGR")
+    if uploaded_video:
+        tfile = tempfile.NamedTemporaryFile(delete=False)
+        tfile.write(uploaded_video.read())
 
-        # refresh checkbox state
-        if not st.session_state.get("run", True):
-            break
+        cap = cv2.VideoCapture(tfile.name)
 
-else:
-    st.warning("Camera OFF")
+        stframe = st.empty()
 
-camera.release()
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = model(frame)
+            annotated_frame = results[0].plot()
+
+            stframe.image(annotated_frame, channels="BGR", use_container_width=True)
+
+        cap.release()
