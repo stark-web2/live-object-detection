@@ -1,96 +1,108 @@
 import streamlit as st
-import cv2
-import numpy as np
+from streamlit_webrtc import webrtc_streamer
 from ultralytics import YOLO
 import av
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+import cv2
+import os
+from datetime import datetime
 
-# -----------------------------
-# PAGE SETUP
-# -----------------------------
-st.set_page_config(page_title="Live Object Detection & Tracking", layout="wide")
-
-st.title("🎥 Live Object Detection & Tracing")
-st.write("Turn on your webcam to detect and track objects in real time.")
-
-# -----------------------------
-# LOAD MODEL
-# -----------------------------
+# Load YOLOv8 model
 @st.cache_resource
 def load_model():
     return YOLO("yolov8n.pt")
 
 model = load_model()
 
-# -----------------------------
-# VIDEO PROCESSOR CLASS
-# -----------------------------
-class YOLOProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.model = model
+st.title("🎥 Live Object Detection & Tracing")
+st.write("Point your camera at objects to identify them in real-time.")
 
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+# Create folder for saved images
+SAVE_DIR = "detected_frames"
+os.makedirs(SAVE_DIR, exist_ok=True)
 
-        # Run YOLO tracking (this gives object IDs)
-        results = self.model.track(img, persist=True, verbose=False)
+# Settings
+ALERT_CLASSES = ["person", "cell phone"]
+SAVE_CLASSES = ["person"]
+last_saved_time = 0
 
-        annotated_frame = results[0].plot()
+# Frame processing
+def video_frame_callback(frame):
+    global last_saved_time
 
-        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+    img = frame.to_ndarray(format="bgr24")
 
-# -----------------------------
-# START WEBCAM STREAM
-# -----------------------------
+    # Run tracking
+    results = model.track(
+        img,
+        persist=True,
+        conf=0.5,
+        verbose=False
+    )
+
+    annotated_frame = results[0].plot()
+
+    # Get detections
+    boxes = results[0].boxes
+    names = model.names
+
+    person_count = 0
+    detected_classes = []
+
+    if boxes is not None:
+        for box in boxes:
+            cls_id = int(box.cls[0])
+            class_name = names[cls_id]
+            detected_classes.append(class_name)
+
+            # Count persons
+            if class_name == "person":
+                person_count += 1
+
+    # Display count on frame
+    cv2.putText(
+        annotated_frame,
+        f"People: {person_count}",
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
+
+    # Alerts
+    for cls in ALERT_CLASSES:
+        if cls in detected_classes:
+            cv2.putText(
+                annotated_frame,
+                f"ALERT: {cls.upper()} DETECTED!",
+                (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+
+    # Save frame (limit saving to avoid spam)
+    current_time = datetime.now().timestamp()
+    if any(cls in detected_classes for cls in SAVE_CLASSES):
+        if current_time - last_saved_time > 3:  # save every 3 seconds
+            filename = os.path.join(
+                SAVE_DIR,
+                f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            )
+            cv2.imwrite(filename, annotated_frame)
+            last_saved_time = current_time
+
+    return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+
+
+# Start webcam
 webrtc_streamer(
-    key="yolo-live",
-    video_processor_factory=YOLOProcessor,
-    media_stream_constraints={"video": True, "audio": False}
+    key="object-detection",
+    video_frame_callback=video_frame_callback,
+    async_processing=True,
+    rtc_configuration={
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    },
+    media_stream_constraints={"video": True, "audio": False},
 )
-
-# -----------------------------
-# INFO SECTION (FOR REPORT REQUIREMENTS)
-# -----------------------------
-st.markdown("""
----
-
-## 📊 Expected Outputs
-
-### 1. Functional Web App
-- Live webcam feed
-- YOLO object detection overlay
-
-### 2. Live Detection
-- Bounding boxes appear instantly
-- Labels like person, phone, bottle, etc.
-
-### 3. Object Tracking
-- Objects keep IDs while moving
-- Smooth real-time tracking using YOLOv8
-
----
-
-## 📌 For Your Report
-
-### Observations
-- List detected objects
-- Lighting effect on accuracy
-- Performance (lag/smooth)
-
-### Screenshots
-Capture:
-- People detection
-- Multiple object detection
-- Moving object tracking
-
-### Reflection
-- What objects were easiest to detect?
-- What affected accuracy?
-
----
-
-## 🚀 Optional Enhancements
-- Object counting (people, cars)
-- Alerts for specific objects
-- Save detected frames as images
-""")
