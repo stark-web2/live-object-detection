@@ -1,22 +1,15 @@
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
-from ultralytics import YOLO
-import av
+mport streamlit as st
 import cv2
+from ultralytics import YOLO
 
 # -----------------------------
-# PAGE CONFIG
+# PAGE SETUP
 # -----------------------------
-st.set_page_config(
-    page_title="Live Object Detection & Tracking",
-    layout="wide"
-)
-
+st.set_page_config(page_title="YOLOv8 Detection", layout="wide")
 st.title("🎥 Live Object Detection & Tracking")
-st.write("Objects are detected and tracked in real-time using YOLOv8.")
 
 # -----------------------------
-# LOAD MODEL (CACHED)
+# LOAD MODEL
 # -----------------------------
 @st.cache_resource
 def load_model():
@@ -25,43 +18,37 @@ def load_model():
 model = load_model()
 
 # -----------------------------
-# VIDEO PROCESSOR CLASS
-# (IMPORTANT FOR STREAMLIT DEPLOYMENT)
+# SIDEBAR
 # -----------------------------
-class YOLOVideoProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.model = model
-
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-
-        # Run YOLO tracking
-        results = self.model.track(
-            source=img,
-            persist=True,
-            conf=0.5,
-            verbose=False
-        )
-
-        # Annotate frame
-        annotated_frame = results[0].plot()
-
-        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+conf = st.sidebar.slider("Confidence", 0.1, 1.0, 0.5)
+run = st.checkbox("Start Camera")
 
 # -----------------------------
-# WEBCAM STREAM
+# CAMERA
 # -----------------------------
-webrtc_streamer(
-    key="yolo-live",
-    video_processor_factory=YOLOVideoProcessor,
-    media_stream_constraints={
-        "video": True,
-        "audio": False
-    },
-    rtc_configuration={
-        "iceServers": [
-            {"urls": ["stun:stun.l.google.com:19302"]}
-        ]
-    },
-    async_processing=True,
-)
+frame_placeholder = st.empty()
+
+camera = cv2.VideoCapture(0)
+
+if run:
+    st.info("Camera running... Press Stop in checkbox to end.")
+
+    while run:
+        ret, frame = camera.read()
+        if not ret:
+            st.error("Camera not working")
+            break
+
+        results = model.track(frame, persist=True, conf=conf)
+        annotated = results[0].plot()
+
+        frame_placeholder.image(annotated, channels="BGR")
+
+        # refresh checkbox state
+        if not st.session_state.get("run", True):
+            break
+
+else:
+    st.warning("Camera OFF")
+
+camera.release()
