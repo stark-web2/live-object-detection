@@ -1,67 +1,67 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 from ultralytics import YOLO
-import numpy as np
-from PIL import Image
+import av
 import cv2
-import tempfile
 
 # -----------------------------
-# PAGE SETUP
+# PAGE CONFIG
 # -----------------------------
-st.set_page_config(page_title="YOLOv8 Detection", layout="wide")
-st.title("📷 YOLOv8 Object Detection (Deployment Ready)")
+st.set_page_config(
+    page_title="Live Object Detection & Tracking",
+    layout="wide"
+)
+
+st.title("🎥 Live Object Detection & Tracking")
+st.write("Objects are detected and tracked in real-time using YOLOv8.")
 
 # -----------------------------
-# LOAD MODEL
+# LOAD MODEL (CACHED)
 # -----------------------------
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8n.pt")  # auto-download
+    return YOLO("yolov8n.pt")
 
 model = load_model()
 
 # -----------------------------
-# SELECT MODE
+# VIDEO PROCESSOR CLASS
+# (IMPORTANT FOR STREAMLIT DEPLOYMENT)
 # -----------------------------
-option = st.radio("Choose Input Type:", ["Image", "Video"])
+class YOLOVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.model = model
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+
+        # Run YOLO tracking
+        results = self.model.track(
+            source=img,
+            persist=True,
+            conf=0.5,
+            verbose=False
+        )
+
+        # Annotate frame
+        annotated_frame = results[0].plot()
+
+        return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
 
 # -----------------------------
-# IMAGE DETECTION
+# WEBCAM STREAM
 # -----------------------------
-if option == "Image":
-    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-    if uploaded_file:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image", use_container_width=True)
-
-        results = model(image)
-        result_img = results[0].plot()
-
-        st.image(result_img, caption="Detected Objects", use_container_width=True)
-
-# -----------------------------
-# VIDEO DETECTION
-# -----------------------------
-elif option == "Video":
-    uploaded_video = st.file_uploader("Upload a video", type=["mp4", "mov", "avi"])
-
-    if uploaded_video:
-        tfile = tempfile.NamedTemporaryFile(delete=False)
-        tfile.write(uploaded_video.read())
-
-        cap = cv2.VideoCapture(tfile.name)
-
-        stframe = st.empty()
-
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            results = model(frame)
-            annotated_frame = results[0].plot()
-
-            stframe.image(annotated_frame, channels="BGR", use_container_width=True)
-
-        cap.release()
+webrtc_streamer(
+    key="yolo-live",
+    video_processor_factory=YOLOVideoProcessor,
+    media_stream_constraints={
+        "video": True,
+        "audio": False
+    },
+    rtc_configuration={
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]}
+        ]
+    },
+    async_processing=True,
+)
